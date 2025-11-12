@@ -28,7 +28,7 @@ Total size: ~20 Terabytes
 ```
 
 
-### Retrieve latest gencode annotation and prepare annotation files
+### Retrieve and prepare annotation files
 Get MM10PLUS files from publication. We want to extract the transgenes and spike in sequences from these.
 
 ```
@@ -40,7 +40,7 @@ Get MM10PLUS files from publication. We want to extract the transgenes and spike
     awk '/^>/ {p = ($0 !~ /chr/)} p' MM10-PLUS/fasta/genome.fa > non_chromosomal_genes.fa
 ```
 
-Get latest Gencode release and mouse genoem
+Get latest Gencode release and mouse genome
 ```
     wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M38/gencode.vM38.annotation.gtf.gz
     wget https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M38/gencode.vM38.primary_assembly.annotation.gtf.gz
@@ -53,6 +53,7 @@ Generate new transcriptome
 ```
     # cleanup gencode header
     sed -i 's/|.*//' gencode.vM38.transcripts.fa
+
     cat gencode.vM38.transcripts.fa non_chromosomal_genes.fa > gencode.vM38plus.fa
 ```
 
@@ -90,7 +91,8 @@ Make a tx2gene txt mapping file for later use
 
 
 ### Build Salmon index and align reads
-Build index and process in parallel. System specific, basic Salmon command below.
+Build index and process in parallel. System specific. Basic Salmon command below.  
+ATTN: No need for bootstrapping and pass `--geneMap` with GTF to save downstream coutning.
 ```
     salmon index -t gencode.vM38plus.fa -p 16 -i gencode.vM38plus.index
 
@@ -107,8 +109,6 @@ Build index and process in parallel. System specific, basic Salmon command below
     --numBootstraps 30 \
     -p 1
 ```
-
-Build index and process in parallel. System specific, basic Salmon command below.
 
 
 ## R single cell analysis steps
@@ -152,7 +152,7 @@ Set these according to your setup.
 ```
 ### Read in salmon file and convert TPM to counts.
 This will take while.  
-Outputs include gene-count matrices.
+Primary output is gene-count matrix.
 
 ```
     micromamba run -n ${ENV} \
@@ -163,7 +163,7 @@ Outputs include gene-count matrices.
 ```
 
 ### QC and normalize
-See output for default filtering
+See output for default filtering details.
 
 ```
     RDS=${OUTPATH}/gene_counts.sparse.rds
@@ -210,7 +210,7 @@ See output for default filtering
 ```
 
 ### PCA and UMAP 
-see output for details
+see output for details.
 ```
 micromamba run -n ${ENV} \
   Rscript ${SCRIPT_DIR}/global_umap_clusters.R \
@@ -254,9 +254,9 @@ If preference is for only tissue level analysis:
     --tissues "Brain_Myeloid,Spleen,Marrow,Brain_Non_Myeloid,Thymus,Liver"
 ```
 
-### Genereate figures
+### Generate figures
 Functions for generating figures are in `scripts/sce_per_tissue_hvg_pca_umap.R`   
-These are meant to be interactive and don't have a CLI (yet, and maybe never).  
+These are meant to be interactive and don't have a CLI (yet, and maybe ever).  
 Example outputs:
 
 ![Global](figures/Global_labeled.png)
