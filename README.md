@@ -256,9 +256,9 @@ If preference is for only tissue level analysis:
 
 ### Genereate figures
 Functions for generating figures are in `scripts/sce_per_tissue_hvg_pca_umap.R`   
-These are meant to be interactive and don't have a CLI (yet, and maybe never).
-Example outputs
+These are meant to be interactive and don't have a CLI (yet, and maybe never).  
+Example outputs:
 
-![Global](figures/Global.png)
+![Global](figures/Global_labeled.png)
 
 ![Zeb2](figures/Zeb2_global.png)

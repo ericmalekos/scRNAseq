@@ -683,7 +683,8 @@ add_umap_group_labels <- function(
       width = width,
       height = height,
       dpi = dpi,
-      units = "in"
+      units = "in",
+      bg="white"
     )
     message("Saved PNG: ", png_file)
     
@@ -695,7 +696,8 @@ add_umap_group_labels <- function(
       width = width,
       height = height,
       units = "in",
-      device = "svg"
+      device = "svg",
+      bg="white"
     )
     message("Saved SVG: ", svg_file)
     
@@ -1130,7 +1132,9 @@ p_tissue_labeled <- add_umap_group_labels(
   output_path = "/home/eric/Projects/tabula_muris/Figures/Global_labeled"
 )
 
-p_tissue_labeled <- add_umap_group_labels(
+p_tissue_labeled
+
+p_tissue <- add_umap_group_labels(
   p        = p_tissue,
   sce      = sce_global,
   dimred   = "UMAP_refined",
@@ -1145,7 +1149,7 @@ p_tissue_labeled <- add_umap_group_labels(
   output_path = "/home/eric/Projects/tabula_muris/Figures/Global"
 )
 
-p_tissue_labeled
+p_tissue
 
 
 ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
