@@ -1,11 +1,27 @@
-library(SingleCellExperiment)
-library(scater)
-library(ggplot2)
-library(viridis)
-library(data.table)
-library(scales)
-library(dplyr)
-library(ggrepel)
+# ---------- Plotting utility functions ----------
+#
+# Source this file to load plotting functions into your R session or notebook:
+#   source("plotting_functions/plot_umap.R")
+#
+# Available functions:
+#   plot_gene_top_violin_points_by_group() - Violin + jittered points by cell type or tissue
+#   plot_gene_top_boxplot_by_group()       - Boxplot by cell type or tissue
+#   add_umap_group_labels()                - Add text labels to an existing UMAP plot
+#   plot_gene_by_cellgroup_in_tissue()     - Expression boxplot within a single tissue
+#   plot_gene_top15_boxplot()              - Top 15 cell type x tissue boxplot
+#   plot_gene_umap_size_color()            - UMAP colored/sized by gene expression
+#   plot_genes_umap_batch()                - Batch plot multiple genes to files
+
+suppressPackageStartupMessages({
+  library(SingleCellExperiment)
+  library(scater)
+  library(ggplot2)
+  library(viridis)
+  library(data.table)
+  library(scales)
+  library(dplyr)
+  library(ggrepel)
+})
 
 
 plot_gene_top_violin_points_by_group <- function(
@@ -597,9 +613,9 @@ add_umap_group_labels <- function(
   # --- Only add labels if there are groups to label ---
   if (length(label_groups) > 0) {
     # --- compute median UMAP coords per group ---
-    label_df <- df %>%
-      dplyr::filter(group %in% label_groups) %>%
-      dplyr::group_by(group) %>%
+    label_df <- df |>
+      dplyr::filter(group %in% label_groups) |>
+      dplyr::group_by(group) |>
       dplyr::summarise(
         UMAP1 = median(UMAP1, na.rm = TRUE),
         UMAP2 = median(UMAP2, na.rm = TRUE),
@@ -616,9 +632,9 @@ add_umap_group_labels <- function(
     # Create a mapping of group to color
     if ("colour" %in% names(plot_data) && "group" %in% names(df)) {
       # Match groups to colors
-      color_map <- df %>%
-        dplyr::select(group) %>%
-        dplyr::distinct() %>%
+      color_map <- df |>
+        dplyr::select(group) |>
+        dplyr::distinct() |>
         dplyr::mutate(row_id = dplyr::row_number())
       
       # Get unique colors from plot data
@@ -635,8 +651,8 @@ add_umap_group_labels <- function(
           )
           
           # Filter to only labeled groups
-          labeled_colors <- color_mapping %>%
-            dplyr::filter(group %in% label_groups) %>%
+          labeled_colors <- color_mapping |>
+            dplyr::filter(group %in% label_groups) |>
             dplyr::arrange(group)
           
           # Print to console
@@ -764,7 +780,7 @@ add_umap_group_labels <- function(
       units = "in",
       bg="white"
     )
-    message("Saved PNG: ", png_file)
+    cat("Saved PNG: ", png_file, "\n", sep = "")
     
     # Save SVG
     svg_file <- paste0(output_base, ".svg")
@@ -777,7 +793,7 @@ add_umap_group_labels <- function(
       device = "svg",
       bg="white"
     )
-    message("Saved SVG: ", svg_file)
+    cat("Saved SVG: ", svg_file, "\n", sep = "")
     
     # Save PDF
     pdf_file <- paste0(output_base, ".pdf")
@@ -789,7 +805,7 @@ add_umap_group_labels <- function(
       units = "in",
       device = "pdf"
     )
-    message("Saved PDF: ", pdf_file)
+    cat("Saved PDF: ", pdf_file, "\n", sep = "")
   }
   
   # Return the modified plot
@@ -1187,7 +1203,7 @@ plot_gene_umap_size_color <- function(
       dpi = dpi,
       units = "in"
     )
-    message("Saved PNG: ", png_file)
+    cat("Saved PNG: ", png_file, "\n", sep = "")
     
     # Save SVG
     svg_file <- paste0(output_base, ".svg")
@@ -1199,7 +1215,7 @@ plot_gene_umap_size_color <- function(
       units = "in",
       device = "svg"
     )
-    message("Saved SVG: ", svg_file)
+    cat("Saved SVG: ", svg_file, "\n", sep = "")
     
     # Save PDF
     pdf_file <- paste0(output_base, ".pdf")
@@ -1211,7 +1227,7 @@ plot_gene_umap_size_color <- function(
       units = "in",
       device = "pdf"
     )
-    message("Saved PDF: ", pdf_file)
+    cat("Saved PDF: ", pdf_file, "\n", sep = "")
   }
   
   # Print and return the plot

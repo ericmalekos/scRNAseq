@@ -1,0 +1,21 @@
+name: scrna_seq_R_env
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base =4.4.*
+  - bioconductor-tximport
+  - bioconductor-scran
+  - bioconductor-scater
+  - bioconductor-scuttle
+  - bioconductor-singlecellexperiment
+  - bioconductor-summarizedexperiment
+  - bioconductor-bluster
+  - r-matrix
+  - r-data.table
+  - r-readr
+  - r-ggplot2
+  - r-igraph
+  - r-uwot
+  - r-pkgconfig
+  - r-BiocManager

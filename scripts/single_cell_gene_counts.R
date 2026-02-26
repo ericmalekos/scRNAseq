@@ -7,7 +7,7 @@ suppressPackageStartupMessages({
   library(tximport)
 })
 
-# ---- CLI (unchanged option names) ----
+# ---------- CLI ----------
 opt <- OptionParser() |>
   add_option("--tx2gene",  help="Path to tx2gene TSV/CSV (read as-is)", metavar="file") |>
   add_option("--quant_dir", help="Parent directory; subdirs (clean_cell_id) each contain quant.sf", metavar="dir") |>
@@ -19,7 +19,7 @@ if (is.null(opt$tx2gene) || is.null(opt$quant_dir) || is.null(opt$outdir)) {
 }
 dir.create(opt$outdir, showWarnings = FALSE, recursive = TRUE)
 
-# ---- Read tx2gene AS-IS (do not modify input file), build 2-col map for tximport ----
+# ---------- Read tx2gene and build 2-col map for tximport ----------
 tx2g_in <- data.table::fread(opt$tx2gene, header = FALSE)  # auto-detects sep
 names(tx2g_in) <- c("TXNAME_RAW", "GENEID_RAW")
 
@@ -41,7 +41,7 @@ utils::write.table(head(tx2g_in, 5),
                    file = file.path(opt$outdir, "tx2gene_preview_head5.tsv"),
                    sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
 
-# ---- Discover quant.sf files recursively; parent dir name is the clean_cell_id ----
+# ---------- Discover quant.sf files ----------
 all_qf <- list.files(opt$quant_dir, pattern = "^quant\\.sf$", recursive = TRUE, full.names = TRUE)
 if (length(all_qf) == 0L) {
   stop("No 'quant.sf' files found under --quant_dir: ", opt$quant_dir)
@@ -60,7 +60,7 @@ data.table::fwrite(
 cat(sprintf("Discovered %d quant.sf files. Example: %s -> %s\n",
             length(qfiles), names(qfiles)[1], qfiles[1]))
 
-# ---- Identify transcript IDs missing from your mapping (compare to FIRST quant.sf) ----
+# ---------- Identify transcript IDs missing from mapping ----------
 # Assumes all cells were quantified against the same Salmon index (standard practice).
 first_qf <- all_qf[1]
 q_tx <- readr::read_tsv(first_qf, show_col_types = FALSE, col_types = cols_only(Name = col_character()))$Name
@@ -76,7 +76,7 @@ cat(sprintf("Transcripts in quant index but missing from tx2gene: %d (see transc
 cat(sprintf("TX IDs present in tx2gene but not in quant index: %d (see tx2gene_tx_not_in_quant.txt)\n",
             length(extra_in_tx2g)))
 
-# ---- tximport in batches with malformed line handling ----
+# ---------- tximport in batches ----------
 
 library(Matrix)
 
@@ -152,7 +152,7 @@ rownames(counts_mat) <- gene_order
 cat(sprintf("Final counts matrix: %d genes x %d cells\n",
             nrow(counts_mat), ncol(counts_mat)))
 
-# ---- Save outputs (NO GZIP) ----
+# ---------- Save outputs ----------
 saveRDS(counts_mat, file = file.path(opt$outdir, "gene_counts.sparse.rds"))
 
 Matrix::writeMM(counts_mat, file.path(opt$outdir, "gene_counts.mtx"))

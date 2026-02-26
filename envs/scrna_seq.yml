@@ -1,0 +1,8 @@
+name: scrna_seq
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - awscli >2
+  - samtools
+  - salmon

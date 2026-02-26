@@ -10,7 +10,7 @@ suppressPackageStartupMessages({
   library(BiocSingular)
 })
 
-# ===================== CLI =====================
+# ---------- CLI ----------
 opt <- OptionParser() |>
   add_option("--sce_rds", help="Input SCE RDS (global object).", metavar = "file") |>
   add_option("--outdir",  help="Output directory.", metavar = "dir") |>
@@ -47,7 +47,7 @@ if (is.null(opt$sce_rds) || is.null(opt$outdir)) {
 }
 dir.create(opt$outdir, showWarnings = FALSE, recursive = TRUE)
 
-# ===================== Load SCE =====================
+# ---------- Load SCE ----------
 cat("Loading SCE from: ", opt$sce_rds, "\n", sep = "")
 sce <- readRDS(opt$sce_rds)
 stopifnot(inherits(sce, "SingleCellExperiment"))
@@ -62,16 +62,14 @@ if (!"logcounts" %in% assayNames(sce)) {
 cat(sprintf("Initial SCE dimensions: %d genes x %d cells\n",
             nrow(sce), ncol(sce)))
 
-# ========================================================
-# GLOBAL ANALYSIS (ALL AGES COMBINED)
-# ========================================================
+# ---------- Global analysis (all ages combined) ----------
 cat("\n========================================\n")
 cat("GLOBAL ANALYSIS (ALL AGES COMBINED)\n")
 cat("========================================\n\n")
 
 sce_global <- sce  # work on a copy
 
-# ===================== Global gene filter =====================
+# ---------- Global gene filter ----------
 if (opt$min_frac_cells > 0 || opt$min_mean_logexpr > 0) {
   cat("Applying global gene filter...\n")
   cnt <- assay(sce_global, "counts")
@@ -95,7 +93,7 @@ if (opt$min_frac_cells > 0 || opt$min_mean_logexpr > 0) {
 cat(sprintf("After filtering (if any): %d genes x %d cells\n",
             nrow(sce_global), ncol(sce_global)))
 
-# ===================== HVGs and PCA =====================
+# ---------- HVGs and PCA ----------
 cat("Computing HVGs...\n")
 set.seed(42)
 dec_global <- scran::modelGeneVar(sce_global, assay.type = "logcounts")
@@ -122,7 +120,7 @@ sce_global <- scater::runPCA(
 )
 cat("PCA completed.\n")
 
-# ===================== UMAP =====================
+# ---------- UMAP ----------
 umap_neighbors_global <- min(opt$umap_neighbors, ncol(sce_global) - 1L)
 if (umap_neighbors_global < 2L) {
   stop("Too few cells for UMAP (effective n_neighbors < 2).")
@@ -142,7 +140,7 @@ sce_global <- scater::runUMAP(
 )
 cat("UMAP completed.\n")
 
-# ===================== SNN graph + clustering =====================
+# ---------- SNN graph + clustering ----------
 cat("Building SNN graph (k = ", opt$k_snn, ")...\n", sep = "")
 k_effective_global <- min(opt$k_snn, ncol(sce_global) - 1L)
 if (k_effective_global < 2L) {
@@ -185,15 +183,13 @@ fwrite(
   sep = "\t"
 )
 
-# ===================== Save global SCE =====================
+# ---------- Save global SCE ----------
 out_file_global <- file.path(opt$outdir, "sce_global_all_ages_umap_clusters.rds")
 saveRDS(sce_global, out_file_global)
 cat("Saved global (all ages) SCE to: ", out_file_global, "\n", sep = "")
 cat("Cluster size summary written to global_cluster_sizes.tsv\n")
 
-# ========================================================
-# AGE-STRATIFIED ANALYSIS
-# ========================================================
+# ---------- Age-stratified analysis ----------
 if ("age" %in% colnames(colData(sce))) {
   cat("\n========================================\n")
   cat("AGE-STRATIFIED ANALYSIS\n")

@@ -1,6 +1,6 @@
 # Tabula Muris/Senis scRNAseq Reanalysis with Expanded Gene Annotations
 
-Pipeline for reanalyzing [Tabula Muris](https://tabula-muris.ds.czbiohub.org/)/Tabula Senis single-cell RNA sequencing data with expanded gene annotations (Gencode M38), particularly to include lncRNAs. Currently limited to SmartSeq2/Plate-seq data from 3-month-old mice.
+Pipeline for reanalyzing [Tabula Muris](https://tabula-muris.ds.czbiohub.org/)/Tabula Senis single-cell RNA sequencing data with expanded gene annotations (Gencode M38), particularly to include lncRNAs. Currently limited to SmartSeq2/Plate-seq data from mice at 3, 18, and 24 months of age.
 
 ## Table of Contents
 
@@ -10,12 +10,12 @@ Pipeline for reanalyzing [Tabula Muris](https://tabula-muris.ds.czbiohub.org/)/T
   - [Retrieve Data and Metadata](#retrieve-data-and-metadata)
   - [Retrieve and Prepare Annotation Files](#retrieve-and-prepare-annotation-files)
   - [Build Salmon Index and Align Reads](#build-salmon-index-and-align-reads)
-  - [R Analysis Environment](#r-analysis-environment)
+  - [R Analysis Variables](#r-analysis-variables)
   - [TPMs to Cell x Gene Matrix](#tpms-to-cell-x-gene-matrix)
   - [QC and Normalize](#qc-and-normalize)
   - [Build SingleCellExperiment](#build-singlecellexperiment)
+  - [Per-Cell-Class Analysis](#per-cell-class-analysis)
   - [Global PCA and UMAP](#global-pca-and-umap)
-  - [Per-Tissue Analysis](#per-tissue-analysis)
 - [Plotting](#plotting)
 - [References](#references)
 
@@ -33,22 +33,26 @@ Processed SingleCellExperiment R data files are available for download on Zenodo
 
 ### Environment Setup
 
+Environment YAML files are in the [`envs/`](envs/) folder. Create them with:
+
 ```bash
-micromamba create -n scrna_seq \
-  -c bioconda -c conda-forge "awscli>2" samtools salmon -y
+micromamba create -f envs/scrna_seq.yml -y
+micromamba create -f envs/scrna_seq_R_env.yml -y
 ```
 
 ### Retrieve Data and Metadata
 
-This grabs the SmartSeq2/Plate-seq data for 3-month-old mice (~20 TB total).
+This grabs the SmartSeq2/Plate-seq data for 3, 18, and 24-month-old mice.
 
 ```bash
 micromamba activate scrna_seq
 
 mkdir Plate_seq && cd Plate_seq
 
-aws s3 sync s3://czb-tabula-muris-senis/Plate_seq/3_month/ ./3_month/ \
-  --no-sign-request --exclude "*" --include "*.fastq.gz"
+for AGE in 3_month 18_month 24_month; do
+  aws s3 sync s3://czb-tabula-muris-senis/Plate_seq/${AGE}/ ./${AGE}/ \
+    --no-sign-request --exclude "*" --include "*.fastq.gz"
+done
 
 cd ..
 
@@ -131,21 +135,7 @@ salmon quant \
   -p 1
 ```
 
-### R Analysis Environment
-
-```bash
-micromamba create -y -n scrna_seq_R_env \
-  -c conda-forge -c bioconda \
-  r-base=4.4.* \
-  bioconductor-tximport \
-  bioconductor-scran \
-  bioconductor-scater \
-  bioconductor-scuttle \
-  bioconductor-singlecellexperiment \
-  bioconductor-summarizedexperiment \
-  bioconductor-bluster \
-  r-matrix r-data.table r-readr r-ggplot2 r-igraph r-uwot r-pkgconfig r-BiocManager
-```
+### R Analysis Variables
 
 Set threading variables (may be needed on some systems).
 
@@ -156,7 +146,7 @@ export MKL_NUM_THREADS=1
 export BLIS_NUM_THREADS=1
 ```
 
-Set paths according to your setup.
+Set paths according to setup.
 
 ```bash
 ENV=scrna_seq_R_env
@@ -172,7 +162,7 @@ METADATA_DIR=Metadata/
 Convert Salmon quant.sf TPM files to a gene-count sparse matrix via tximport (batched in groups of 1000 samples).
 
 ```bash
-micromamba run -n ${ENV} \
+micromamba run -p ${ENV} \
   Rscript ${SCRIPT_DIR}/single_cell_gene_counts.R \
   --tx2gene ${TX2GENE} \
   --quant_dir ${INPATH} \
@@ -181,12 +171,12 @@ micromamba run -n ${ENV} \
 
 ### QC and Normalize
 
-Filter cells (default: min 500 genes, 50k reads) and normalize (CPM + log1p).
+Filter cells (default: min 500 genes, 50k reads) and normalize (log(1+CPM)).
 
 ```bash
 RDS=${OUTPATH}/gene_counts.sparse.rds
 
-micromamba run -n ${ENV} \
+micromamba run -p ${ENV} \
   Rscript ${SCRIPT_DIR}/QC_normalize_counts.R \
   --counts_rds ${RDS} \
   --outdir ${OUTPATH}
@@ -197,7 +187,7 @@ micromamba run -n ${ENV} \
 Combine raw counts, logcounts, and published cell metadata into a SingleCellExperiment object.
 
 ```bash
-micromamba run -n ${ENV} \
+micromamba run -p ${ENV} \
   Rscript ${SCRIPT_DIR}/build_sce_from_counts_and_metadata.R \
   --counts_rds    ${OUTPATH}/gene_counts.filtered.raw.rds \
   --logcounts_rds ${OUTPATH}/gene_counts.normalized_logcp.rds \
@@ -207,36 +197,41 @@ micromamba run -n ${ENV} \
   --output_rds     sce_plate_seq.rds
 ```
 
-### Global PCA and UMAP
+### Per-Cell-Class Analysis
 
-Gene filtering, HVG selection, PCA, UMAP, and Louvain/Leiden clustering.
+Per-cell-class HVG selection, PCA, and UMAP. Use `--list_cells` to enumerate available classes, then `--cell_classes` to select specific ones.
 
 ```bash
-micromamba run -n ${ENV} \
+micromamba run -p ${ENV} \
+  Rscript ${SCRIPT_DIR}/sce_per_cellclass_hvg_pca_umap.R \
+  --sce_rds ${OUTPATH}/sce_plate_seq.rds \
+  --list_cells
+
+micromamba run -p ${ENV} \
+  Rscript ${SCRIPT_DIR}/sce_per_cellclass_hvg_pca_umap.R \
+  --sce_rds ${OUTPATH}/sce_plate_seq.rds \
+  --cell_classes "microglial cell,B cell,hematopoietic stem cell,granulocyte,macrophage,monocyte,CD4+ aB T cell,CD8+ aB T cell,NK cell,myeloid dendritic cell,neutrophil" \
+  --outdir ${OUTPATH} \
+  --umap_min_dist 0.5 \
+  --umap_neighbors 10
+```
+
+### Global PCA and UMAP
+
+Gene filtering, HVG selection, PCA, UMAP, and Louvain clustering.
+
+```bash
+micromamba run -p ${ENV} \
   Rscript ${SCRIPT_DIR}/global_umap_clusters.R \
   --sce_rds ${OUTPATH}/sce_plate_seq.rds \
   --outdir  ${OUTPATH}/full_data_umap \
-  --min_frac_cells 0.001 \
+  --min_frac_cells 0.0000000001 \
   --min_mean_logexpr 0 \
   --n_hvg 3000 \
   --n_pcs 50 \
   --umap_neighbors 30 \
   --umap_min_dist 0.5 \
   --cluster_method louvain
-```
-
-### Per-Tissue Analysis
-
-Per-tissue HVG selection, PCA, and UMAP. Use `--tissues` to select specific tissues.
-
-```bash
-micromamba run -n ${ENV} \
-  Rscript ${SCRIPT_DIR}/sce_per_tissue_hvg_pca_umap.R \
-  --sce_rds ${OUTPATH}/sce_plate_seq.rds \
-  --outdir  ${OUTPATH}/tissue_umaps \
-  --umap_neighbors 15 \
-  --umap_min_dist 0.2 \
-  --tissues "Brain_Myeloid,Spleen,Marrow,Brain_Non_Myeloid,Thymus,Liver"
 ```
 
 ---
