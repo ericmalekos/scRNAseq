@@ -75,9 +75,15 @@ if (!"obs_names" %in% names(meta)) {
   stop("metadata file must contain an 'obs_names' column.")
 }
 
-# ---------- Join metadata <- fastq_manifest to get clean_cell_id ----------
-meta_join <- merge(meta, fq[, .(obs_names, clean_cell_id)],
-                   by = "obs_names", all.x = TRUE)
+# ---------- Strip suffixes from obs_names for matching ----------
+# Metadata has suffixes like .mm10-plus-X-X or .mus-X-X-X
+# Manifest may or may not have them
+meta$obs_names_base <- sub("\\.(mm10-plus-\\d+-\\d+|mus-\\d+-\\d+-\\d+)$", "", meta$obs_names)
+fq$obs_names_base <- sub("\\.(mm10-plus-\\d+-\\d+|mus-\\d+-\\d+-\\d+)$", "", fq$obs_names)
+
+# ---------- Join metadata <- fastq_manifest using base names ----------
+meta_join <- merge(meta, fq[, .(obs_names_base, clean_cell_id)],
+                   by = "obs_names_base", all.x = TRUE)
 
 n_missing_clean <- sum(is.na(meta_join$clean_cell_id))
 if (n_missing_clean > 0) {

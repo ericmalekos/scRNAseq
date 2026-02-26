@@ -17,8 +17,11 @@ plot_gene_top_violin_points_by_group <- function(
     tissue_col          = "tissue",
     top_n               = 5,
     min_cells_per_group = 20,
-    tissue_filter       = NULL,   # comma-separated string or character vector
-    celltype_filter     = NULL,   # comma-separated string or character vector
+    tissue_filter       = NULL,   # INCLUDE only these tissues (comma-separated string or character vector)
+    celltype_filter     = NULL,   # INCLUDE only these cell types
+    tissue_exclude      = NULL,   # EXCLUDE these tissues
+    celltype_exclude    = NULL,   # EXCLUDE these cell types
+    top_stat            = c("median", "mean"),  # how to rank groups
     x_title             = NULL,
     y_title             = NULL,
     main_title          = NULL,
@@ -26,9 +29,13 @@ plot_gene_top_violin_points_by_group <- function(
     expr_min            = 0,      # threshold for "expressed" (expr > expr_min)
     show_legend         = TRUE,   # if FALSE, hide legend entirely
     expr_cap            = NULL,   # if set, cap expression at this value
-    save_prefix         = NULL    # if set, save PDF/SVG/PNG + group_stats TSV
+    save_prefix         = NULL,   # if set, save PDF/SVG/PNG + group_stats TSV
+    fig_width           = 4,      # fallback total figure width if panel_width_in is NULL
+    fig_height          = 5,   # total figure height (inches); if NULL, auto by #groups
+    panel_width_in      = NULL    # NEW: desired panel width (inches) for the plotting area
 ) {
   group_mode <- match.arg(group_mode)
+  top_stat   <- match.arg(top_stat)  # "median" or "mean"
   
   # --- basic checks ---
   if (!inherits(sce, "SingleCellExperiment")) {
@@ -79,17 +86,21 @@ plot_gene_top_violin_points_by_group <- function(
     stop("No cells with non-NA group, tissue, and cell_ontology_class.")
   }
   
-  # --- apply tissue_filter (if supplied) ---
-  tissue_filter_vec <- NULL
-  if (!is.null(tissue_filter)) {
-    if (length(tissue_filter) == 1L) {
-      tissue_filter_vec <- strsplit(tissue_filter, ",")[[1]]
+  # --- helper to parse filter/exclude vectors ---
+  parse_vec <- function(x) {
+    if (is.null(x)) return(NULL)
+    if (length(x) == 1L) {
+      v <- strsplit(x, ",")[[1]]
     } else {
-      tissue_filter_vec <- tissue_filter
+      v <- x
     }
-    tissue_filter_vec <- trimws(tissue_filter_vec)
-    tissue_filter_vec <- tissue_filter_vec[nchar(tissue_filter_vec) > 0]
-    
+    v <- trimws(v)
+    v[nchar(v) > 0]
+  }
+  
+  # --- apply tissue_filter (INCLUDE) ---
+  tissue_filter_vec <- parse_vec(tissue_filter)
+  if (!is.null(tissue_filter_vec)) {
     all_tissues <- sort(unique(dt$tissue))
     missing_t <- setdiff(tissue_filter_vec, all_tissues)
     if (length(missing_t) > 0) {
@@ -113,17 +124,31 @@ plot_gene_top_violin_points_by_group <- function(
     }
   }
   
-  # --- apply celltype_filter (if supplied) ---
-  celltype_filter_vec <- NULL
-  if (!is.null(celltype_filter)) {
-    if (length(celltype_filter) == 1L) {
-      celltype_filter_vec <- strsplit(celltype_filter, ",")[[1]]
-    } else {
-      celltype_filter_vec <- celltype_filter
+  # --- apply tissue_exclude (EXCLUDE) ---
+  tissue_exclude_vec <- parse_vec(tissue_exclude)
+  if (!is.null(tissue_exclude_vec)) {
+    all_tissues <- sort(unique(dt$tissue))
+    missing_t_ex <- setdiff(tissue_exclude_vec, all_tissues)
+    if (length(missing_t_ex) > 0) {
+      warning(
+        "The following tissues in tissue_exclude are not present and will be ignored: ",
+        paste(missing_t_ex, collapse = ", ")
+      )
     }
-    celltype_filter_vec <- trimws(celltype_filter_vec)
-    celltype_filter_vec <- celltype_filter_vec[nchar(celltype_filter_vec) > 0]
-    
+    rm_tissues <- intersect(tissue_exclude_vec, all_tissues)
+    if (length(rm_tissues) > 0) {
+      cat("Excluding tissues in tissue_exclude:\n  - ",
+          paste(rm_tissues, collapse = "\n  - "), "\n", sep = "")
+      dt <- dt[!tissue %in% rm_tissues]
+    }
+    if (nrow(dt) == 0) {
+      stop("No cells remain after applying tissue_exclude.")
+    }
+  }
+  
+  # --- apply celltype_filter (INCLUDE) ---
+  celltype_filter_vec <- parse_vec(celltype_filter)
+  if (!is.null(celltype_filter_vec)) {
     all_celltypes <- sort(unique(dt$celltype))
     missing_ct <- setdiff(celltype_filter_vec, all_celltypes)
     if (length(missing_ct) > 0) {
@@ -147,18 +172,46 @@ plot_gene_top_violin_points_by_group <- function(
     }
   }
   
-  # --- median expression + cell counts per group ---
+  # --- apply celltype_exclude (EXCLUDE) ---
+  celltype_exclude_vec <- parse_vec(celltype_exclude)
+  if (!is.null(celltype_exclude_vec)) {
+    all_celltypes <- sort(unique(dt$celltype))
+    missing_ct_ex <- setdiff(celltype_exclude_vec, all_celltypes)
+    if (length(missing_ct_ex) > 0) {
+      warning(
+        "The following cell_ontology_class values in celltype_exclude are not present and will be ignored: ",
+        paste(missing_ct_ex, collapse = ", ")
+      )
+    }
+    rm_celltypes <- intersect(celltype_exclude_vec, all_celltypes)
+    if (length(rm_celltypes) > 0) {
+      cat("Excluding cell_ontology_class in celltype_exclude:\n  - ",
+          paste(rm_celltypes, collapse = "\n  - "), "\n", sep = "")
+      dt <- dt[!celltype %in% rm_celltypes]
+    }
+    if (nrow(dt) == 0) {
+      stop("No cells remain after applying celltype_exclude.")
+    }
+  }
+  
+  # --- median & mean expression + cell counts per group ---
   summary_dt <- dt[
     ,
     .(
       median_expr = median(expr, na.rm = TRUE),
+      mean_expr   = mean(expr, na.rm = TRUE),
       n_cells     = .N
     ),
     by = group
-  ][order(-median_expr)]
+  ]
   
-  cat("Median ", assay_name, " expression of ", gene_id,
-      " by ", group_label, " (before min_cells filter; sorted descending):\n", sep = "")
+  metric_col <- if (top_stat == "median") "median_expr" else "mean_expr"
+  
+  # sort by chosen metric, descending
+  summary_dt <- summary_dt[order(-summary_dt[[metric_col]])]
+  
+  cat("Per-group ", assay_name, " expression of ", gene_id,
+      " by ", group_label, " (sorted by ", top_stat, "):\n", sep = "")
   print(summary_dt)
   
   # --- filter by min_cells_per_group ---
@@ -179,12 +232,13 @@ plot_gene_top_violin_points_by_group <- function(
       " cells, remaining groups:\n", sep = "")
   print(summary_dt_filt)
   
-  # --- take top N groups by median_expr ---
+  # --- take top N groups by chosen statistic ---
+  summary_dt_filt <- summary_dt_filt[order(-summary_dt_filt[[metric_col]])]
   top_n_eff   <- min(top_n, nrow(summary_dt_filt))
   top_summary <- summary_dt_filt[seq_len(top_n_eff)]
   
   cat("\nTop ", top_n_eff, " ", group_label,
-      " groups (after min_cells filter):\n", sep = "")
+      " groups (after min_cells filter; ranked by ", top_stat, "):\n", sep = "")
   print(top_summary)
   
   # --- determine display order for groups ---
@@ -205,7 +259,7 @@ plot_gene_top_violin_points_by_group <- function(
   # subset dt to top groups and set factor levels in desired order
   dt_top <- merge(
     dt,
-    top_summary[, .(group, median_expr)],
+    top_summary[, .(group, median_expr, mean_expr)],
     by = "group",
     all.x = FALSE,
     all.y = TRUE
@@ -252,14 +306,15 @@ plot_gene_top_violin_points_by_group <- function(
     main_title <- paste0(
       "Top ", top_n_eff, " ", group_label,
       " groups for ", gene_id,
-      " (violin + black points; ≥", min_cells_per_group, " cells/group)"
+      " (violin + black points; ≥", min_cells_per_group, " cells/group; ranked by ",
+      top_stat, ")"
     )
   }
   if (is.null(legend_title)) {
     legend_title <- group_label
   }
   
-  # --- violin + black points (horizontal) ---
+  # --- build ggplot (panel layout only) ---
   p <- ggplot(dt_top, aes(x = expr, y = group)) +
     geom_violin(
       aes(fill = group),
@@ -274,13 +329,13 @@ plot_gene_top_violin_points_by_group <- function(
       alpha    = 0.6,
       position = position_jitter(height = 0.1, width = 0)
     ) +
-    scale_fill_viridis_d(option = "turbo", name = legend_title) +
+    scale_fill_manual(values = rep("grey80", length(unique(dt_top$group))), name = legend_title) +
     labs(
       y     = y_title,
       x     = x_title,
       title = main_title
     ) +
-    theme_bw(base_size = 8) +  # base text size 8
+    theme_bw(base_size = 8) +
     theme(
       legend.text  = element_text(size = 8),
       legend.title = element_text(size = 8),
@@ -296,23 +351,49 @@ plot_gene_top_violin_points_by_group <- function(
     p <- p + theme(legend.position = "none")
   }
   
-  print(p)
+  # --- convert to grob & fix panel width if requested ---
+  if (!is.null(panel_width_in)) {
+    g <- ggplotGrob(p)
+    panel_cols <- unique(g$layout$l[g$layout$name == "panel"])
+    g$widths[panel_cols] <- grid::unit(panel_width_in, "in")
+  } else {
+    g <- p
+  }
+  
+  # --- print to current device ---
+  if (inherits(g, "grob")) {
+    grid::grid.newpage()
+    grid::grid.draw(g)
+  } else {
+    print(g)
+  }
   
   # --- saving if requested ---
   if (!is.null(save_prefix)) {
     dir.create(dirname(save_prefix), showWarnings = FALSE, recursive = TRUE)
     
     n_groups <- length(levels(dt_top$group))
-    height   <- max(3, 0.25 * n_groups + 1)  # auto height based on #groups
+    if (is.null(fig_height)) {
+      height <- max(3, 0.25 * n_groups + 1)  # auto height based on #groups
+    } else {
+      height <- fig_height
+    }
+    
+    # If we adjusted panel width, compute total width from grob
+    if (!is.null(panel_width_in) && inherits(g, "grob")) {
+      total_width <- sum(grid::convertWidth(g$widths, "in", valueOnly = TRUE))
+    } else {
+      total_width <- fig_width
+    }
     
     pdf_file  <- paste0(save_prefix, ".pdf")
     svg_file  <- paste0(save_prefix, ".svg")
     png_file  <- paste0(save_prefix, ".png")
     tsv_file  <- paste0(save_prefix, "_group_stats.tsv")
     
-    ggsave(pdf_file, plot = p, width = 7, height = height)
-    ggsave(svg_file, plot = p, width = 7, height = height)
-    ggsave(png_file, plot = p, width = 7, height = height, dpi = 300)
+    ggsave(pdf_file, plot = g, width = total_width, height = height)
+    ggsave(svg_file, plot = g, width = total_width, height = height)
+    ggsave(png_file, plot = g, width = total_width, height = height, dpi = 300)
     
     data.table::fwrite(group_stats, tsv_file, sep = "\t")
     
@@ -325,12 +406,9 @@ plot_gene_top_violin_points_by_group <- function(
     filtered_summary = summary_dt_filt,
     top_summary      = top_summary,
     group_stats      = group_stats,
-    plot             = p
+    plot             = g
   ))
 }
-
-
-
 
 
 plot_gene_top_boxplot_by_group <- function(
@@ -463,7 +541,7 @@ add_umap_group_labels <- function(
     output_path = NULL,         # Base path for saving (without extension)
     width       = 8,            # Width for saved plots (inches)
     height      = 6,            # Height for saved plots (inches)
-    dpi         = 600           # DPI for PNG output
+    dpi         = 1200           # DPI for PNG output
 ) {
   # --- checks ---
   if (!inherits(sce, "SingleCellExperiment")) {
@@ -916,17 +994,23 @@ plot_gene_umap_size_color <- function(
     dimred      = "UMAP_refined",
     assay_name  = "logcounts",
     size_range  = c(0.2, 1.),
+    color_limits = NULL,        # c(min, max) for color scale; NULL = auto
+    color_map   = "turbo",      # NEW: viridis color palette option
+    nothing     = FALSE,
     title       = NULL,
-    x_label     = "UMAP 1",         # X axis label; NULL = use default from dimred
-    y_label     = "UMAP 2",         # Y axis label; NULL = use default from dimred
-    legend_title = "log(CPM+1)",        # Legend title; NULL = use assay_name
-    add_grid    = TRUE,         # Whether to add grid lines
-    grid_color  = "grey90",     # Grid line color
-    grid_size   = 0.3,          # Grid line size
-    output_path = NULL,         # Base path for saving (without extension)
-    width       = 8,            # Width for saved plots (inches)
-    height      = 6,            # Height for saved plots (inches)
-    dpi         = 1200          # DPI for PNG output
+    x_label     = "UMAP 1",
+    y_label     = "UMAP 2",
+    legend_title = "log(CPM+1)",
+    xlim        = NULL,
+    ylim        = NULL,
+    aspect_ratio = 1,
+    add_grid    = TRUE,
+    grid_color  = "grey90",
+    grid_size   = 0.3,
+    output_path = NULL,
+    width       = 8,
+    height      = 6,
+    dpi         = 1200
 ) {
   # --- checks ---
   if (!inherits(sce, "SingleCellExperiment")) {
@@ -960,7 +1044,7 @@ plot_gene_umap_size_color <- function(
   # scale point sizes based on expression
   df$size_scaled <- rescale(df$expr, to = size_range)
   
-  # --- Set default title ---
+  # --- Set default title (ignored if nothing=TRUE) ---
   if (is.null(title)) {
     title <- paste0(dimred, " - ", gene_id, " expression (", assay_name, ")")
   }
@@ -968,51 +1052,96 @@ plot_gene_umap_size_color <- function(
   # --- Build base plot ---
   p <- ggplot(df, aes(UMAP1, UMAP2)) +
     geom_point(aes(color = expr, size = size_scaled), alpha = 0.9) +
-    scale_colour_viridis_c(option = "turbo") +
-    scale_size(range = size_range, guide = "none") +
-    coord_equal() +
-    theme_bw()
+    scale_size(range = size_range, guide = "none")
   
-  # --- Add title ---
-  if (!is.null(title)) {
-    p <- p + ggtitle(title)
+  # Add color scale with custom color_map
+  if (!is.null(color_limits)) {
+    p <- p + scale_colour_viridis_c(option = color_map, limits = color_limits)
+  } else {
+    p <- p + scale_colour_viridis_c(option = color_map)
   }
   
-  # --- Add axis labels ---
-  if (!is.null(x_label)) {
-    p <- p + xlab(x_label)
-  } else {
-    # Default to UMAP_1 or similar based on dimred name
-    default_x <- if (grepl("UMAP", dimred, ignore.case = TRUE)) {
-      "UMAP_1"
-    } else if (grepl("TSNE", dimred, ignore.case = TRUE)) {
-      "tSNE_1"
+  # --- Set coordinate system with aspect ratio and limits ---
+  if (!is.null(aspect_ratio)) {
+    # Fixed aspect ratio
+    if (!is.null(xlim) && !is.null(ylim)) {
+      p <- p + coord_fixed(ratio = aspect_ratio, xlim = xlim, ylim = ylim)
+    } else if (!is.null(xlim)) {
+      p <- p + coord_fixed(ratio = aspect_ratio, xlim = xlim)
+    } else if (!is.null(ylim)) {
+      p <- p + coord_fixed(ratio = aspect_ratio, ylim = ylim)
     } else {
-      paste0(dimred, "_1")
+      p <- p + coord_fixed(ratio = aspect_ratio)
     }
-    p <- p + xlab(default_x)
+  } else {
+    # Free aspect ratio
+    if (!is.null(xlim)) {
+      p <- p + xlim(xlim)
+    }
+    if (!is.null(ylim)) {
+      p <- p + ylim(ylim)
+    }
   }
   
-  if (!is.null(y_label)) {
-    p <- p + ylab(y_label)
+  # --- Add theme ---
+  p <- p + theme_bw()
+  
+  # --- Handle "nothing" mode ---
+  if (nothing) {
+    # Strip everything: title, axis labels, axis text, legend
+    p <- p + theme(
+      plot.title = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks = element_blank(),
+      legend.position = "none"
+    )
   } else {
-    # Default to UMAP_2 or similar based on dimred name
-    default_y <- if (grepl("UMAP", dimred, ignore.case = TRUE)) {
-      "UMAP_2"
-    } else if (grepl("TSNE", dimred, ignore.case = TRUE)) {
-      "tSNE_2"
+    # Normal mode: add title, axis labels, legend title
+    
+    # --- Add title ---
+    if (!is.null(title)) {
+      p <- p + ggtitle(title)
+    }
+    
+    # --- Add axis labels ---
+    if (!is.null(x_label)) {
+      p <- p + xlab(x_label)
     } else {
-      paste0(dimred, "_2")
+      # Default to UMAP_1 or similar based on dimred name
+      default_x <- if (grepl("UMAP", dimred, ignore.case = TRUE)) {
+        "UMAP_1"
+      } else if (grepl("TSNE", dimred, ignore.case = TRUE)) {
+        "tSNE_1"
+      } else {
+        paste0(dimred, "_1")
+      }
+      p <- p + xlab(default_x)
     }
-    p <- p + ylab(default_y)
-  }
-  
-  # --- Add legend title ---
-  if (!is.null(legend_title)) {
-    p <- p + labs(color = legend_title)
-  } else {
-    # Use the assay_name as default legend title
-    p <- p + labs(color = assay_name)
+    
+    if (!is.null(y_label)) {
+      p <- p + ylab(y_label)
+    } else {
+      # Default to UMAP_2 or similar based on dimred name
+      default_y <- if (grepl("UMAP", dimred, ignore.case = TRUE)) {
+        "UMAP_2"
+      } else if (grepl("TSNE", dimred, ignore.case = TRUE)) {
+        "tSNE_2"
+      } else {
+        paste0(dimred, "_2")
+      }
+      p <- p + ylab(default_y)
+    }
+    
+    # --- Add legend title ---
+    if (!is.null(legend_title)) {
+      p <- p + labs(color = legend_title)
+    } else {
+      # Use the assay_name as default legend title
+      p <- p + labs(color = assay_name)
+    }
   }
   
   # --- Add grid lines ---
@@ -1090,412 +1219,116 @@ plot_gene_umap_size_color <- function(
   invisible(p)
 }
 
-#sce_global <- readRDS("/home/eric/Projects/tabula_muris/sce_filtered_global_pca_umap.rds")
-#sce_global <- readRDS("/home/eric/Projects/tabula_muris/sce_global_umap_clusters.rds")
-sce_global <- readRDS("/home/eric/Projects/tabula_muris/sce_global_umap_clusters_neigh30_mdist05.rds")
-
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### Color by tissue
-
-p_tissue <- plotReducedDim(
-  sce_global,
-  "UMAP_refined",
-  colour_by  = "tissue",
-  point_size = 0.25
-) +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4, alpha = 1)))
-
-p_tissue
-
-label_tissues <- c(
-  "Mammary_Gland", "Spleen", "Marrow",
-  "Kidney", "Lung", "Brain_Non-Myeloid", "Brain_Myeloid",
-  "Diaphragm", "Trachea", "Tongue", "Thymus",
-  "Large_Intestine", "Pancreas","Bladder",
-  "Skin", "SCAT", "Liver", "Limb_Muscle", "Heart", "GAT", "BAT", "Aorta"
-)
-
-p_tissue_labeled <- add_umap_group_labels(
-  p        = p_tissue,
-  sce      = sce_global,
-  dimred   = "UMAP_refined",
-  group_col = "tissue",
-  groups   = label_tissues,
-  repel    = TRUE,   # if you have ggrepel
-  text_size  = 3,
-  legend_title = "Tissue of origin",
-  dpi=1200,
-  width = 10,
-  override_alpha = 1,
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Global_labeled"
-)
-
-p_tissue_labeled
-
-p_tissue <- add_umap_group_labels(
-  p        = p_tissue,
-  sce      = sce_global,
-  dimred   = "UMAP_refined",
-  group_col = "tissue",
-  groups   = character(0),
-  repel    = TRUE,   # if you have ggrepel
-  text_size  = 3,
-  legend_title = "Tissue of origin",
-  dpi=1200,
-  width = 10,
-  override_alpha = 1,
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Global"
-)
-
-p_tissue
-
-
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### Plot by gene
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Brip1os",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  title = "Brip1os expression",
-  size_range  = c(0.1, .4),
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Brip1os_global"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Gapdh",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  title = "Gapdh expression",
-  size_range  = c(0.1, .4),
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Gapdh_global"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "D17H6S56E-5",
-  dimred    = "UMAP_refined",
-  size_range  = c(0.2, .6),
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/D17H6S56E_global"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Ptgs2os2",
-  dimred    = "UMAP_refined",
-  size_range  = c(0.2, .6),
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Ptgs2os2_global"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Ptgs2",
-  dimred    = "UMAP_refined",
-  size_range  = c(0.2, .6),
-  assay_name = "logcounts",
-  #output_path = "/home/eric/Projects/tabula_muris/Figures/Ptgs2os2"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Zeb2os",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Zeb2os_global"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Synb",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Synb_global"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Zeb2",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Zeb2_global")
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Mir142hg",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Mir142hg_global"
-  )
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Tug1",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Tug1"
-)
-
-# plot_gene_umap_size_color(
-#   sce_global,
-#   gene_id   = "Mir142",
-#   dimred    = "UMAP_refined",
-#   assay_name = "logcounts",
-#   output_path = "/home/eric/Projects/tabula_muris/Figures/Mir142"
-# )
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Tspoap1",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Tspoap1"
-)
-
-plot_gene_umap_size_color(
-  sce_global,
-  gene_id   = "Gm20703",
-  dimred    = "UMAP_refined",
-  assay_name = "logcounts",
-  output_path = "/home/eric/Projects/tabula_muris/Figures/Gaplinc"
-)
+plot_genes_umap_batch <- function(
+    sce,
+    genes,
+    output_dir,
+    dimred = "UMAP_refined",
+    assay_name = "logcounts",
+    nothing     = TRUE,
+    size_range = c(0.1, 0.4),
+    aspect_ratio = 0.75,
+    color_limits = c(0, 10),
+    width = 8,
+    height = 6,
+    dpi = 1200,
+    add_grid = TRUE,
+    grid_color = "grey90",
+    grid_size = 0.3,
+    color_map = "turbo"
+) {
+  # Validate inputs
+  if (!inherits(sce, "SingleCellExperiment")) {
+    stop("sce must be a SingleCellExperiment object.")
+  }
+  if (!dimred %in% names(reducedDims(sce))) {
+    stop("dimred '", dimred, "' not found in reducedDims(sce).")
+  }
+  if (!dir.exists(output_dir)) {
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+    cat("Created output directory:", output_dir, "\n")
+  }
+  
+  # Track results
+  found_genes <- character()
+  missing_genes <- character()
+  error_genes <- character()
+  
+  cat("\n========================================\n")
+  cat("Plotting", length(genes), "genes to:", output_dir, "\n")
+  cat("Using dimred:", dimred, "\n")
+  cat("========================================\n\n")
+  
+  for (gene in genes) {
+    cat("--- Processing gene:", gene, "---\n")
+    
+    # Check if gene exists in the data
+    if (!gene %in% rownames(sce)) {
+      cat("  Gene '", gene, "' not found in data. Skipping.\n\n", sep = "")
+      missing_genes <- c(missing_genes, gene)
+      next
+    }
+    
+    # Try to generate the plot
+    tryCatch({
+      # Create unique output path for this gene
+      output_path <- file.path(output_dir, paste0(gene, "_", dimred))
+      
+      plot_gene_umap_size_color(
+        sce,
+        gene_id      = gene,
+        dimred       = dimred,
+        assay_name   = assay_name,
+        title        = paste0(gene, " expression"),
+        size_range   = size_range,
+        aspect_ratio = aspect_ratio,
+        color_limits = color_limits,
+        width        = width,
+        height       = height,
+        dpi          = dpi,
+        add_grid     = add_grid,
+        grid_color   = grid_color,
+        grid_size    = grid_size,
+        output_path  = output_path,
+        nothing = nothing,
+        color_map = color_map
+      )
+      
+      cat("  Successfully plotted:", gene, "\n\n")
+      found_genes <- c(found_genes, gene)
+      
+    }, error = function(e) {
+      cat("  Error plotting gene '", gene, "': ", e$message, "\n", sep = "")
+      cat("  Continuing to next gene...\n\n")
+      error_genes <- c(error_genes, gene)
+    })
+  }
+  
+  # Summary
+  cat("\n========================================\n")
+  cat("SUMMARY\n")
+  cat("========================================\n")
+  cat("Total genes requested:", length(genes), "\n")
+  cat("Successfully plotted:  ", length(found_genes), "\n")
+  cat("Not found in data:     ", length(missing_genes), "\n")
+  cat("Errors during plotting:", length(error_genes), "\n")
+  
+  if (length(missing_genes) > 0) {
+    cat("\nMissing genes:\n")
+    cat("  ", paste(missing_genes, collapse = ", "), "\n", sep = "")
+  }
+  
+  if (length(error_genes) > 0) {
+    cat("\nGenes with errors:\n")
+    cat("  ", paste(error_genes, collapse = ", "), "\n", sep = "")
+  }
+  
+  # Return summary invisibly
+  invisible(list(
+    found = found_genes,
+    missing = missing_genes,
+    errors = error_genes
+  ))
+}
 
 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### Tissues
-
-Marrow <- readRDS("/home/eric/Projects/tabula_muris/sce_tissue_Marrow.rds")
-
-p <- plotReducedDim(
-  Marrow,
-  "UMAP",
-  colour_by  = "cell_ontology_class",
-  point_size = 0.25
-)
-p +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4)))
-
-Brain_myeloid <- readRDS("/home/eric/Projects/tabula_muris/sce_tissue_Brain_Myeloid.rds")
-
-p <- plotReducedDim(
-  Brain_myeloid,
-  "UMAP",
-  colour_by  = "cell_ontology_class",
-  point_size = 0.25
-)
-p +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4)))
-
-
-Brain_nonmyeloid <- readRDS("/home/eric/Projects/tabula_muris/sce_tissue_Brain_Non_Myeloid.rds")
-
-p <- plotReducedDim(
-  Brain_nonmyeloid,
-  "UMAP",
-  colour_by  = "cell_ontology_class",
-  point_size = 0.25
-)
-p +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4)))
-
-Spleen <- readRDS("/home/eric/Projects/tabula_muris/sce_tissue_Spleen.rds")
-
-p <- plotReducedDim(
-  Spleen,
-  "UMAP",
-  colour_by  = "cell_ontology_class",
-  point_size = 0.25
-)
-p +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4)))
-
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### Boxplots
-
-cell_order = c(
-  "hematopoietic stem cell",
-  "granulocytopoietic cell",
-  "granulocyte monocyte progenitor cell",
-  "granulocyte",
-  "promonocyte",
-  "monocyte",
-  "non-classical monocyte",
-  "macrophage",
-  "microglial cell",
-  "dendritic cell",
-  "plasmacytoid dendritic cell",
-  "myeloid dendritic cell",
-  "basophil",
-  "neutrophil",
-  "NK cell",
-  "mature NK T cell",
-  "immature B cell",
-  "naive B cell",
-  "B cell",
-  "plasma cell",
-  "T cell",
-  "mature alpha-beta T cell",
-  "regulatory T cell"
-  )
-
-plot_gene_top_violin_points_by_group(
-  sce          = sce_global,
-  gene_id      = "Brip1os",
-  assay_name   = "logcounts",
-  group_mode   = "cell_type",
-  cell_type_col = "cell_ontology_class",
-  top_n        = 20,
-  min_cells_per_group = 5,
-  tissue_col   = "tissue",
-  celltype_filter = cell_order,
-  x_title             = "log(CPM + 1)",
-  y_title             = "Cell ontology class",
-  main_title          = "Brip1os expression across immune cells",
-  legend_title        = "Cell type",
-  expr_cap            = 10,
-  show_legend         = FALSE,
-  #save_prefix = "/home/eric/Projects/tabula_muris/Figures/Brip1os"
-)
-
-plot_gene_top_violin_points_by_group(
-  sce          = sce_global,
-  gene_id      = "D17H6S56E-5",
-  assay_name   = "logcounts",
-  group_mode   = "cell_type",
-  cell_type_col = "cell_ontology_class",
-  top_n        = 20,
-  min_cells_per_group = 20,
-  tissue_col   = "tissue",
-  celltype_filter = cell_order,
-  x_title             = "log(CPM + 1)",
-  y_title             = "Cell ontology class",
-  main_title          = "D17H6S56E-5 expression across across immune cells",
-  legend_title        = "Cell type",
-  #expr_cap            = 4,
-  show_legend         = FALSE,
-  #save_prefix = "/home/eric/Projects/tabula_muris/Figures/D17H6S56E-5"
-  )
-
-plot_gene_top_violin_points_by_group(
-  sce          = sce_global,
-  gene_id      = "Zeb2os",
-  assay_name   = "logcounts",
-  group_mode   = "cell_type",
-  cell_type_col = "cell_ontology_class",
-  top_n        = 20,
-  min_cells_per_group = 30,
-  tissue_col   = "tissue",
-  x_title             = "log(CPM + 1)",
-  y_title             = "Cell ontology class",
-  main_title          = "Zeb2os expression across selected cell types",
-  legend_title        = "Cell type",
-  celltype_filter = cell_order,
-  #expr_cap            = 1.5,
-  show_legend         = FALSE,
-  #save_prefix = "/home/eric/Projects/tabula_muris/Figures/Zeb2os"
-  )
-
-
-plot_gene_top_violin_points_by_group(
-  sce          = sce_global,
-  gene_id      = "Zeb2",
-  assay_name   = "logcounts",
-  group_mode   = "cell_type",
-  cell_type_col = "cell_ontology_class",
-  top_n        = 20,
-  min_cells_per_group = 30,
-  tissue_col   = "tissue",
-  x_title             = "log(CPM + 1)",
-  y_title             = "Cell ontology class",
-  main_title          = "Zeb2 expression across selected cell types",
-  legend_title        = "Cell type",
-  celltype_filter = cell_order,
-  #expr_cap            = 4,
-  show_legend         = FALSE,
-  #save_prefix = "/home/eric/Projects/tabula_muris/Figures/Zeb2"
-  )
-
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### Marrow
-
-
-
-gene_id <- "Brip1os"  # example
-gene_id <- "D17H6S56E-5"  # example
-
-res <- plot_gene_top15_boxplot(
-  Marrow,
-  gene_id = gene_id,
-  assay_name = "logcounts",                 # or "counts" if you prefer
-  cell_type_col = "cell_ontology_class",
-  tissue_col    = "tissue"
-)
-
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### Macrophage
-
-Macrophage <- readRDS("/home/eric/Projects/tabula_muris/cell_umaps/sce_cellclass_macrophage.rds")
-p <- plotReducedDim(
-  Macrophage,
-  "UMAP",
-  colour_by  = "tissue",
-  point_size = 0.25
-)
-p +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4)))
-
-
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### ### 
-### Brain
-
-Brain_myeloid <- readRDS("/home/eric/Projects/tabula_muris/sce_tissue_Brain_Myeloid.rds")
-Brain_nonmyeloid <- readRDS("/home/eric/Projects/tabula_muris/sce_tissue_Brain_Non_Myeloid.rds")
-
-p <- plotReducedDim(
-  Brain_myeloid,
-  "UMAP",
-  colour_by  = "cell_ontology_class",
-  point_size = 0.25
-)
-p +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4)))
-
-p <- plotReducedDim(
-  Brain_nonmyeloid,
-  "UMAP",
-  colour_by  = "cell_ontology_class",
-  point_size = 0.25
-)
-p +
-  scale_colour_viridis_d(option = "turbo") +
-  guides(colour = guide_legend(override.aes = list(size = 4)))
-
-
-gene_id <- "Brip1os"  # example
-gene_id <- "D17H6S56E-5"  # example
-gene_id <- "Gm20703"  # example
-
-res <- plot_gene_top15_boxplot(
-  sce_global,
-  gene_id = gene_id,
-  assay_name = "logcounts",                 # or "counts" if you prefer
-  cell_type_col = "cell_ontology_class",
-  tissue_col    = "tissue"
-)

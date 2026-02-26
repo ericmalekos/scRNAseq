@@ -76,16 +76,14 @@ cat(sprintf("Transcripts in quant index but missing from tx2gene: %d (see transc
 cat(sprintf("TX IDs present in tx2gene but not in quant index: %d (see tx2gene_tx_not_in_quant.txt)\n",
             length(extra_in_tx2g)))
 
-# ---- tximport in batches to avoid giant transcript x sample matrix ----
+# ---- tximport in batches with malformed line handling ----
 
 library(Matrix)
 
-all_files <- qfiles                       # named vector: names = cell IDs, values = quant.sf paths
+all_files <- qfiles
 n_samples <- length(all_files)
 cat(sprintf("Total samples (quant.sf files): %d\n", n_samples))
 
-# Choose a batch size so that n_tx * batch_size << 2e9.
-# With ~278k transcripts, 1000 is very safe (278M elements).
 batch_size <- 1000L
 idx <- seq_len(n_samples)
 batches <- split(idx, ceiling(idx / batch_size))
@@ -100,39 +98,50 @@ for (b in seq_along(batches)) {
   cat(sprintf("Running tximport batch %d / %d with %d samples\n",
               b, length(batches), length(this_files)))
   
+  # Validate files before tximport - remove lines with missing Name field
+  for (i in seq_along(this_files)) {
+    qf_data <- readr::read_tsv(this_files[i], show_col_types = FALSE)
+    
+    # Check for missing or blank Name values
+    if (any(is.na(qf_data$Name) | trimws(qf_data$Name) == "")) {
+      bad_rows <- which(is.na(qf_data$Name) | trimws(qf_data$Name) == "")
+      cat(sprintf("  WARNING: File %s has %d row(s) with missing Name field - removing them\n",
+                  names(this_files)[i], length(bad_rows)))
+      qf_data <- qf_data[!is.na(qf_data$Name) & trimws(qf_data$Name) != "", ]
+      # Overwrite the file with cleaned data
+      readr::write_tsv(qf_data, this_files[i])
+    }
+  }
+  
   txi_b <- tximport(
     files   = this_files,
     type    = "salmon",
     tx2gene = tx2g_map,
     countsFromAbundance = "no",
     ignoreTxVersion     = TRUE,
-    dropInfReps         = TRUE   # important to avoid extra blow-up
+    dropInfReps         = TRUE
   )
   
-  # Gene x samples (dense for this batch)
+  # Rest of the code stays the same...
   counts_b <- Matrix(txi_b$counts, sparse = TRUE)
   colnames(counts_b) <- names(this_files)
   
-  # Ensure consistent gene order across batches
   if (is.null(gene_order)) {
     gene_order <- rownames(counts_b)
   } else {
     if (!identical(gene_order, rownames(counts_b))) {
-      # Reorder if needed, just to be safe
       counts_b <- counts_b[gene_order, , drop = FALSE]
     }
   }
   
   counts_list[[b]] <- counts_b
   
-  # Free memory from this batch
   txi_b$abundance <- NULL
   txi_b$length    <- NULL
   txi_b$infReps   <- NULL
-  rm(txi_b, counts_b)
+  rm(txi_b, counts_b, qf_data)
   gc()
 }
-
 # Column-bind all batches into a single genes x cells matrix
 if (length(counts_list) == 1L) {
   counts_mat <- counts_list[[1L]]

@@ -20,7 +20,7 @@ opt <- OptionParser() |>
              help = "Optional comma-separated list of tissue names to process (default: all tissues).") |>
   
   # Global gene filter
-  add_option("--min_frac_cells", type="double", default=0.001,
+  add_option("--min_frac_cells", type="double", default=0.00000001,
              help="Global gene filter: keep genes expressed in >= this fraction of cells [default %default].") |>
   add_option("--min_mean_logexpr", type="double", default=0,
              help="Global gene filter: keep genes with mean(logcounts) > this value [default %default].") |>
